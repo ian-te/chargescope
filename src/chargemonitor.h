@@ -53,8 +53,10 @@ class ChargeMonitor : public QObject
     Q_PROPERTY(QString version READ version CONSTANT)
 
 public:
-    // `sysfsRoot` is "/sys" on a phone; tests point it at a copy of one.
-    explicit ChargeMonitor(const QString &sysfsRoot = QStringLiteral("/sys"), QObject *parent = nullptr);
+    // `sysfsRoot` is "/sys" on a phone; tests point it at a copy of one, and give a saved kernel
+    // log as `logFile` instead of reading the ring buffer.
+    explicit ChargeMonitor(const QString &sysfsRoot = QStringLiteral("/sys"), const QString &logFile = QString(),
+                           QObject *parent = nullptr);
 
     bool active() const { return m_active; }
     void setActive(bool active);
@@ -109,6 +111,7 @@ private:
 
     const QString m_powerSupply;
     const QString m_typec;
+    const QString m_logFile;
     QTimer m_poll;
     QTimer m_rescan;
     int m_rescansLeft = 0;

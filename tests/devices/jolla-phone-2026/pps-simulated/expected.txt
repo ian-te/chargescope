@@ -4,6 +4,8 @@ watts: 17.47
 
 [Charging]
 VBUS: 8.42 V  <- mtk-master-charger/voltage_now
+Input current: 2160 mA  <- primary_dvchg/current_now
+Input power: 18.2 W (96 % reaches the battery)  <- mtk-master-charger/voltage_now × primary_dvchg/current_now
 Input current limit: 3000 mA  <- primary_chg/input_current_limit
 Input voltage limit: 4.40 V  <- primary_chg/input_voltage_limit
 Charge current: 3000 mA (max 3150 mA)  <- primary_chg/constant_charge_current
@@ -15,8 +17,6 @@ Charger temperature: 42.0 °C  <- mtk-master-charger/temp
 
 [Charge pump]
 Status: Charging  <- primary_dvchg/status
-Voltage: 8.40 V  <- primary_dvchg/voltage_now
-Current: 2050 mA  <- primary_dvchg/current_now
 Temperature: 25.0 °C  <- primary_dvchg/temp
 Voltage limit: 8.90 V  <- primary_dvchg/voltage_max
 Current limit: 1000 mA  <- primary_dvchg/current_max

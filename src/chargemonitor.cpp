@@ -161,10 +161,11 @@ QString amps(int ma)
 
 }
 
-ChargeMonitor::ChargeMonitor(const QString &sysfsRoot, QObject *parent)
+ChargeMonitor::ChargeMonitor(const QString &sysfsRoot, const QString &logFile, QObject *parent)
     : QObject(parent)
     , m_powerSupply(sysfsRoot + QStringLiteral("/class/power_supply"))
     , m_typec(sysfsRoot + QStringLiteral("/class/typec"))
+    , m_logFile(logFile)
     , m_temperature(std::numeric_limits<double>::quiet_NaN())
 {
     m_poll.setInterval(PollMs);
@@ -225,9 +226,10 @@ void ChargeMonitor::sample()
             continue;
         }
         supplies.append(name);
+        // 1 is online, 2 online with a programmable (adjustable) input, as primary_chg on PD.
         qint64 state = -1;
         readInt(attrPath(name, QStringLiteral("online")), &state);
-        if (state == 1) {
+        if (state >= 1) {
             plugged = true;
             online.append(name);
             if (isPump(name))
@@ -237,7 +239,7 @@ void ChargeMonitor::sample()
         }
         // "Unknown SDP DCP CDP [PD] PD_PPS": the one in brackets is what's connected.
         const QString usbType = readText(attrPath(name, QStringLiteral("usb_type")));
-        if (usbType.contains(QLatin1Char('[')) && m_usbType.isEmpty() && state == 1) {
+        if (usbType.contains(QLatin1Char('[')) && m_usbType.isEmpty() && state >= 1) {
             const QString selected = bracketed(usbType);
             if (selected != QLatin1String("Unknown")) {
                 m_usbType = selected;
@@ -395,6 +397,20 @@ void ChargeMonitor::buildSections(const QStringList &supplies, const QString &ba
     }
 
     add(tr("VBUS"), vbusSource, m_vbusMv >= 0 ? volts(m_vbusMv) : QStringLiteral("—"), false);
+    // The MT6720's charge pump measures the input bus whether or not it's pumping: its
+    // voltage_now is VBUS, and its current_now the current drawn from the charger.
+    qint64 ibus = 0;
+    if (m_plugged && !pump.isEmpty() && readInt(attrPath(pump, QStringLiteral("current_now")), &ibus) && ibus > 0) {
+        add(tr("Input current"), pump + QStringLiteral("/current_now"), formatMa(ibus), false);
+        if (m_vbusMv > 0) {
+            const double inputWatts = m_vbusMv * (ibus / 1000.0) / 1e6;
+            QString detail;
+            if (m_watts > 0)
+                detail = tr("%1 % reaches the battery").arg(qRound(100 * m_watts / inputWatts));
+            addDetailed(tr("Input power"), vbusSource + QStringLiteral(" × ") + pump + QStringLiteral("/current_now"),
+                        QString::number(inputWatts, 'f', 1) + QStringLiteral(" W"), detail, false);
+        }
+    }
     add(tr("Input current limit"), limitSource,
         m_inputLimitMa >= 0 ? QStringLiteral("%1 mA").arg(m_inputLimitMa) : QStringLiteral("—"), false);
     number(tr("Input voltage limit"), charger, "input_voltage_limit", formatV);
@@ -413,8 +429,6 @@ void ChargeMonitor::buildSections(const QStringList &supplies, const QString &ba
     section(tr("Charging"));
 
     text(tr("Status"), pump, "status");
-    number(tr("Voltage"), pump, "voltage_now", formatV);
-    number(tr("Current"), pump, "current_now", formatMa);
     number(tr("Temperature"), pump, "temp", formatC);
     number(tr("Voltage limit"), pump, "voltage_max", formatV);
     number(tr("Current limit"), pump, "current_max", formatMa);
@@ -469,8 +483,12 @@ void ChargeMonitor::buildSections(const QStringList &supplies, const QString &ba
         if (!data.isEmpty())
             add(tr("Data role"), port + QStringLiteral("/data_role"), data, false);
     }
+    // SDP, DCP and CDP come from BC1.2's look at the data lines, which a PD charger can fail:
+    // the Jolla Phone says SDP while on PD.
+    static const QStringList Bc12 = {QStringLiteral("SDP"), QStringLiteral("DCP"), QStringLiteral("CDP")};
     if (!m_usbType.isEmpty())
-        add(tr("USB type"), usbTypeSource, m_usbType, false);
+        addDetailed(tr("USB type"), usbTypeSource, m_usbType,
+                    Bc12.contains(m_usbType) ? tr("BC1.2 detection") : QString(), false);
     if (!port.isEmpty()) {
         const QString dir = m_typec + QLatin1Char('/') + port + QLatin1Char('/');
         const QString pd = readText(dir + QStringLiteral("usb_power_delivery_revision"));
@@ -485,8 +503,9 @@ void ChargeMonitor::buildSections(const QStringList &supplies, const QString &ba
     for (const QString &name : supplies) {
         qint64 state = -1;
         readInt(attrPath(name, QStringLiteral("online")), &state);
-        add(chipName(name, chipModel(attrPath(name, QString()), name)), name + QStringLiteral("/online"),
-            state == 1 ? tr("Online") : state == 0 ? tr("Offline") : QStringLiteral("—"), state != 1);
+        addDetailed(chipName(name, chipModel(attrPath(name, QString()), name)), name + QStringLiteral("/online"),
+                    state >= 1 ? tr("Online") : state == 0 ? tr("Offline") : QStringLiteral("—"),
+                    state == 2 ? tr("programmable input") : QString(), state < 1);
     }
     section(tr("Charger chips"));
 }
@@ -553,7 +572,7 @@ void ChargeMonitor::scanOffers()
     m_lastScan = QDateTime::currentMSecsSinceEpoch();
     if (!m_plugged) {
         // Remember where the log ends, so the next charger isn't shown this one's offers.
-        const KernelLog::Scan scan = KernelLog::scan(std::numeric_limits<double>::max());
+        const KernelLog::Scan scan = KernelLog::scan(std::numeric_limits<double>::max(), m_logFile);
         if (scan.readable)
             m_logMark = scan.lastTime;
         m_logError = scan.error;
@@ -564,7 +583,7 @@ void ChargeMonitor::scanOffers()
         return;
     }
 
-    const KernelLog::Scan scan = KernelLog::scan(m_logMark);
+    const KernelLog::Scan scan = KernelLog::scan(m_logMark, m_logFile);
     m_logError = scan.error;
     if (!scan.pdos.isEmpty()) {
         m_pdos = scan.pdos;
@@ -624,8 +643,13 @@ int ChargeMonitor::inUseIndex() const
 {
     if (m_logSelected >= 0) {
         for (int i = 0; i < m_pdos.size(); ++i) {
-            if (m_pdos.at(i).index == m_logSelected)
+            const KernelLog::Pdo &p = m_pdos.at(i);
+            if (p.index != m_logSelected)
+                continue;
+            // The listing is from a few seconds ago; a fixed offer VBUS is far from has been left.
+            if (p.pps || m_vbusMv <= 0 || std::abs(m_vbusMv - p.maxMv) <= std::max(1000, p.maxMv / 7))
                 return i;
+            break;
         }
     }
     if (!m_plugged || m_vbusMv <= 0)
@@ -722,7 +746,7 @@ QString ChargeMonitor::deviceReport() const
     }
 
     QString error;
-    const QStringList lines = KernelLog::pdLines(200, &error);
+    const QStringList lines = KernelLog::pdLines(200, &error, m_logFile);
     out << QString() << QStringLiteral("Kernel log, PD and charger lines:");
     if (!error.isEmpty())
         out << QStringLiteral("  (%1)").arg(error);

@@ -1,0 +1,60 @@
+[99435.741695] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[3], 20000mV, 2250mA, 45000000uW
+[99435.741842] [T23733] <99435.741>TCPC-TCPM:bk_event_cb -> OK
+[99435.760474] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99445.692435] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99445.737882] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99445.738179] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99445.739026] [T23855] <99445.738>TCPC-PE-EVT:tcp_event(get_src_cap_ext), 18, 0
+[99445.739090] [T23855] <99445.738>TCPC-PE:PD -> SNK_GET_CAP_EXT (CUN)
+[99445.739129] [T23855] <99445.738>11282000.i2c:mt6720@34:mt6720-tcpc: mt6379_transmit: -- delta = 134154ns
+[99445.741506] [T21563] <99445.741>TCPC-TCPC:Alert:0x0040, Mask:0x8e7d
+[99445.741562] [T21563] <99445.741>TCPC-PE-EVT:good_crc
+[99445.744935] [T21563] <99445.744>TCPC-TCPC:Alert:0x0004, Mask:0x8e7d
+[99445.744994] [T21563] <99445.744>TCPC-PE-EVT:src_cap_ext
+[99445.745032] [T21563] <99445.744>TCPC-PE:PD -> SNK_READY (CUN)
+[99445.745128] [T23855] <99445.745>TCPC-TCPM:bk_event_cb -> OK
+[99445.745202] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo nr:4 idx:2
+[99445.745253] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap number = 4
+[99445.745295] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[0], 5000mV, 2400mA, 12000000uW
+[99445.745344] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[1], 9000mV, 3000mA, 27000000uW
+[99445.745392] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[2], 15000mV, 3000mA, 45000000uW
+[99445.745441] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[3], 20000mV, 2250mA, 45000000uW
+[99445.760050] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99455.700416] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99455.752185] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99455.752483] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99455.753202] [T23733] <99455.752>TCPC-PE-EVT:tcp_event(get_src_cap_ext), 18, 0
+[99455.753264] [T23733] <99455.752>TCPC-PE:PD -> SNK_GET_CAP_EXT (CUN)
+[99455.753304] [T23733] <99455.753>11282000.i2c:mt6720@34:mt6720-tcpc: mt6379_transmit: -- delta = 142154ns
+[99455.755717] [T23733] <99455.755>TCPC-TCPC:Alert:0x0040, Mask:0x8e7d
+[99455.755776] [T23733] <99455.755>TCPC-PE-EVT:good_crc
+[99455.759113] [T23733] <99455.758>TCPC-TCPC:Alert:0x0004, Mask:0x8e7d
+[99455.759172] [T23733] <99455.759>TCPC-PE-EVT:src_cap_ext
+[99455.759209] [T23733] <99455.759>TCPC-PE:PD -> SNK_READY (CUN)
+[99455.759430] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo nr:4 idx:2
+[99455.759494] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap number = 4
+[99455.759536] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[0], 5000mV, 2400mA, 12000000uW
+[99455.759585] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[1], 9000mV, 3000mA, 27000000uW
+[99455.759632] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[2], 15000mV, 3000mA, 45000000uW
+[99455.759680] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[3], 20000mV, 2250mA, 45000000uW
+[99455.759853] [T22761] <99455.759>TCPC-TCPM:bk_event_cb -> OK
+[99455.779111] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99465.709129] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99465.756473] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99465.756772] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo
+[99465.757483] [T22761] <99465.757>TCPC-PE-EVT:tcp_event(get_src_cap_ext), 18, 0
+[99465.757547] [T22761] <99465.757>TCPC-PE:PD -> SNK_GET_CAP_EXT (CUN)
+[99465.757585] [T22761] <99465.757>11282000.i2c:mt6720@34:mt6720-tcpc: mt6379_transmit: -- delta = 134385ns
+[99465.759972] [T22761] <99465.759>TCPC-TCPC:Alert:0x0040, Mask:0x8e7d
+[99465.760034] [T22761] <99465.759>TCPC-PE-EVT:good_crc
+[99465.763581] [T23733] <99465.762>TCPC-TCPC:Alert:0x0004, Mask:0x8e7d
+[99465.763643] [T23733] <99465.763>TCPC-PE-EVT:src_cap_ext
+[99465.763682] [T23733] <99465.763>TCPC-PE:PD -> SNK_READY (CUN)
+[99465.763766] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo nr:4 idx:2
+[99465.763815] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap number = 4
+[99465.763857] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[0], 5000mV, 2400mA, 12000000uW
+[99465.763905] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[1], 9000mV, 3000mA, 27000000uW
+[99465.763953] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[2], 15000mV, 3000mA, 45000000uW
+[99465.764001] [  T569] pd_adapter pd-adapter: pd_get_cap_pdo cap[3], 20000mV, 2250mA, 45000000uW
+[99465.764152] [T23733] <99465.763>TCPC-TCPM:bk_event_cb -> OK
+[99465.778082] [  T569] pd_adapter pd-adapter: pd_authentication pd type is not snk apdo

@@ -1,0 +1,60 @@
+mode: pd
+plugged: yes
+watts: 10.68
+offer #1: fixed 5000-5000 mV 2400 mA
+offer #2: fixed 9000-9000 mV 3000 mA [in use]
+offer #3: fixed 15000-15000 mV 3000 mA
+offer #4: fixed 20000-20000 mV 2250 mA
+
+[Charging]
+VBUS: 8.52 V  <- mtk-master-charger/voltage_now
+Input current: 1424 mA  <- primary_dvchg/current_now
+Input power: 12.1 W (88 % reaches the battery)  <- mtk-master-charger/voltage_now × primary_dvchg/current_now
+Input current limit: 1500 mA  <- primary_chg/input_current_limit
+Input voltage limit: 7.80 V  <- primary_chg/input_voltage_limit
+Charge current: 3000 mA (max 3150 mA)  <- primary_chg/constant_charge_current
+Charge voltage: 4.52 V (max 4.85 V)  <- primary_chg/constant_charge_voltage
+Pre-charge current: 1000 mA  <- primary_chg/precharge_current
+Termination current: 300 mA  <- primary_chg/charge_term_current
+Charger status: Charging  <- primary_chg/status
+Charger temperature: 46.0 °C  <- mtk-master-charger/temp
+
+[Charge pump]
+Status: Not charging  <- primary_dvchg/status
+Temperature: 46.0 °C  <- primary_dvchg/temp
+Voltage limit: 8.90 V  <- primary_dvchg/voltage_max
+Current limit: 1000 mA  <- primary_dvchg/current_max
+
+[Battery]
+Current: 2528 mA  <- battery/current_now
+Average current: 2418 mA  <- battery/current_avg
+Voltage: 4.22 V  <- battery/voltage_now
+Temperature: 29.1 °C  <- battery/temp
+Charge level: 62 %  <- battery/capacity
+Status: Charging  <- battery/status
+Health: Good  <- battery/health
+Capacity: 3760 mAh (100 % of 3760 mAh new)  <- battery/charge_full
+Charge remaining: 2331 mAh  <- battery/charge_counter
+Cycle count: 2  <- battery/cycle_count
+Time to full: 35 min  <- battery/time_to_full_now
+Technology: Li-ion  <- battery/technology
+
+[USB-C]
+Charger PD revision: 3.1  <- port0-partner/usb_power_delivery_revision
+Type-C power mode: USB PD  <- port0/power_operation_mode
+Power role: sink  <- port0/power_role
+Data role: device  <- port0/data_role
+USB type: SDP (BC1.2 detection)  <- primary_chg/usb_type
+Phone PD revision: 3.1  <- port0/usb_power_delivery_revision
+Type-C revision: 1.2  <- port0/usb_typec_revision
+
+[Charger chips]
+Fuel gauge · MT6720: Offline [dim]  <- mt6720-gauge/online
+Main charger: Online  <- mtk-master-charger/online
+Main charge pump: Offline [dim]  <- mtk-mst-div-chg/online
+Main high-voltage charge pump: Offline [dim]  <- mtk-mst-hvdiv-chg/online
+Second charger: Online  <- mtk-slave-charger/online
+Second charge pump: Offline [dim]  <- mtk-slv-div-chg/online
+Second high-voltage charge pump: Offline [dim]  <- mtk-slv-hvdiv-chg/online
+Charger IC · MT6720: Online (programmable input)  <- primary_chg/online
+Charge pump IC · MT6720: Offline [dim]  <- primary_dvchg/online
