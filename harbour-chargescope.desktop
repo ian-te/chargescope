@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=ChargeScope
+Comment=What your charger offers and how the phone uses it
+Icon=harbour-chargescope
+Exec=/usr/bin/harbour-chargescope
+X-Nemo-Application-Type=silica-qt5
+X-Nemo-Single-Instance=yes
+
+[X-Sailjail]
+# The app reads the kernel log (klogctl), which Sailjail's seccomp filter blocks, and sysfs.
+Sandboxing=Disabled
