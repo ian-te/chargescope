@@ -1,0 +1,44 @@
+name: Device report
+description: Help ChargeScope read the charger on your phone
+title: "Device report: "
+labels: ["device"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! A report from your phone becomes a test, so ChargeScope can be taught where your
+        phone's kernel keeps VBUS, the charge pump and the charger's offers.
+
+        1. Plug in a USB PD charger (one that can charge your phone fast, ideally one with PPS).
+        2. Open ChargeScope and wait 20 seconds.
+        3. Pull down → **All readings**, then pull down → **Copy all**, and paste it below.
+
+        The report holds your phone's power-supply and USB-C readings and the kernel log's
+        USB PD lines. Look it over before you send it.
+  - type: input
+    id: phone
+    attributes:
+      label: Phone
+      placeholder: Xperia 10 III, Sailfish OS 5.0
+    validations:
+      required: true
+  - type: input
+    id: charger
+    attributes:
+      label: Charger
+      placeholder: Anker 735, 65 W USB PD with PPS
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Device report
+      description: Pull down → All readings → pull down → Copy all
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: What ChargeScope shows, and what you'd expect
+      description: For example the mode badge, or offers that are missing.

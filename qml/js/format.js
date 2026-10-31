@@ -26,6 +26,7 @@ function modeName(mode) {
     case "pps": return qsTr("Direct charging (PPS)")
     case "pd": return qsTr("USB PD")
     case "basic": return qsTr("Basic USB")
+    case "wireless": return qsTr("Wireless")
     default: return qsTr("Not charging")
     }
 }

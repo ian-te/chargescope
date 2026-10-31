@@ -4,3 +4,5 @@ RPMS/
 Makefile
 .qmake.stash
 *.pro.user
+tests/tst_chargescope
+tests/*.moc

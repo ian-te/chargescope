@@ -14,10 +14,6 @@ Page {
         return m
     }
 
-    function chipState(online) {
-        return online === 1 ? qsTr("Online") : online === 0 ? qsTr("Offline") : qsTr("Unknown")
-    }
-
     function gaugeCaption() {
         if (chargescope.watts > 0.005)
             return qsTr("into the battery")
@@ -33,6 +29,10 @@ Page {
         contentHeight: column.height + Theme.paddingLarge
 
         PullDownMenu {
+            MenuItem {
+                text: qsTr("All readings")
+                onClicked: pageStack.animatorPush(Qt.resolvedUrl("AllReadingsPage.qml"))
+            }
             MenuItem {
                 text: qsTr("Copy report")
                 onClicked: {
@@ -122,39 +122,32 @@ Page {
                 }
             }
 
-            SectionHeader { text: qsTr("Phone") }
-
-            DetailItem { label: qsTr("VBUS"); value: Format.volts(chargescope.vbusMv) }
-            DetailItem { label: qsTr("Input current limit"); value: Format.milliamps(chargescope.inputLimitMa) }
-            DetailItem { label: qsTr("Battery current"); value: chargescope.batteryMa + " mA" }
-            DetailItem { label: qsTr("Battery voltage"); value: Format.volts(chargescope.batteryMv) }
-            DetailItem { label: qsTr("Battery temperature"); value: Format.celsius(chargescope.temperature) }
-            DetailItem {
-                label: qsTr("Charge level")
-                value: chargescope.capacity >= 0 ? chargescope.capacity + " %" : "—"
-            }
-            DetailItem {
-                label: qsTr("PD revision")
-                value: chargescope.pdRevision || "—"
-            }
-            DetailItem {
-                visible: chargescope.usbType.length > 0
-                label: qsTr("USB type")
-                value: chargescope.usbType
-            }
-
-            SectionHeader {
-                visible: chargescope.chips.length > 0
-                text: qsTr("Charger chips")
-            }
-
+            // Charging, charge pump, battery, USB-C and the chips, as the C++ side groups them.
+            // Counted rather than given the lists, so the rows stay put and only their text
+            // changes at each poll.
             Repeater {
-                model: chargescope.chips
-                DetailItem {
-                    label: modelData.name
-                    value: chipState(modelData.online)
-                    // DetailItem has no colour property for the value, so dim the whole row instead.
-                    opacity: modelData.online === 1 ? 1.0 : Theme.opacityHigh
+                model: chargescope.sections.length
+
+                Column {
+                    id: sectionColumn
+
+                    readonly property var section: chargescope.sections[index]
+
+                    width: column.width
+
+                    SectionHeader { text: sectionColumn.section.title }
+
+                    Repeater {
+                        model: sectionColumn.section.items.length
+                        ParamItem {
+                            readonly property var entry: sectionColumn.section.items[index]
+                            label: entry.label
+                            param: entry.param
+                            value: entry.value
+                            detail: entry.detail || ""
+                            opacity: entry.dim ? Theme.opacityHigh : 1.0
+                        }
+                    }
                 }
             }
 

@@ -2,6 +2,7 @@
 #define KERNELLOG_H
 
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 // What the charger offers, as MediaTek's PD driver logs it to the kernel ring buffer.
@@ -29,6 +30,10 @@ Scan scan(double after);
 
 // The parser on its own, for text already read.
 Scan parse(const QString &log, double after);
+
+// The newest `max` lines that look like they're about USB PD or charging, for device reports:
+// other phones' drivers log the charger's offers in their own formats.
+QStringList pdLines(int max, QString *error);
 
 }
 

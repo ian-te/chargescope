@@ -4,6 +4,8 @@
 #include <QRegularExpression>
 #include <QStringList>
 
+#include <algorithm>
+
 #include <cerrno>
 #include <cstring>
 #include <utility>
@@ -12,26 +14,59 @@
 namespace KernelLog {
 
 namespace {
+
 const int ActionReadAll = 3;      // SYSLOG_ACTION_READ_ALL
 const int ActionSizeBuffer = 10;  // SYSLOG_ACTION_SIZE_BUFFER
-}
 
-Scan scan(double after)
+// The whole ring buffer, as dmesg reads it.
+bool read(QString *log, QString *error)
 {
     int size = klogctl(ActionSizeBuffer, nullptr, 0);
     if (size <= 0)
         size = 1 << 20;
     QByteArray buffer(size, Qt::Uninitialized);
-    const int read = klogctl(ActionReadAll, buffer.data(), buffer.size());
-    if (read < 0) {
-        Scan failed;
-        failed.error = errno == EPERM
-                ? QStringLiteral("The kernel log is restricted (kernel.dmesg_restrict)")
+    const int length = klogctl(ActionReadAll, buffer.data(), buffer.size());
+    if (length < 0) {
+        // dmesg_restrict, or a sandbox's seccomp filter
+        *error = errno == EPERM
+                ? QStringLiteral("Reading the kernel log isn't permitted")
                 : QStringLiteral("Can't read the kernel log: %1").arg(QString::fromLocal8Bit(strerror(errno)));
+        return false;
+    }
+    buffer.truncate(length);
+    *log = QString::fromUtf8(buffer);
+    return true;
+}
+
+}
+
+Scan scan(double after)
+{
+    QString log;
+    QString error;
+    if (!read(&log, &error)) {
+        Scan failed;
+        failed.error = error;
         return failed;
     }
-    buffer.truncate(read);
-    return parse(QString::fromUtf8(buffer), after);
+    return parse(log, after);
+}
+
+QStringList pdLines(int max, QString *error)
+{
+    static const QRegularExpression re(QStringLiteral(
+            "pd_get_cap|pdo|apdo|\\bpps\\b|tcpc|tcpm|pe_snk|src_?cap|source_cap|typec|pd_dpm|hvdcp|\\bqc[23]|charger_type|chg_type"),
+            QRegularExpression::CaseInsensitiveOption);
+    QString log;
+    QStringList lines;
+    if (!read(&log, error))
+        return lines;
+    const QStringList all = log.split(QLatin1Char('\n'));
+    for (const QString &line : all) {
+        if (re.match(line).hasMatch())
+            lines.append(line);
+    }
+    return lines.mid(std::max(0, lines.size() - max));
 }
 
 Scan parse(const QString &log, double after)

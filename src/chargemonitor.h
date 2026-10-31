@@ -6,6 +6,7 @@
 #include <QPair>
 #include <QTimer>
 #include <QVariantList>
+#include <QVariantMap>
 #include <QVector>
 
 #include "kernellog.h"
@@ -18,7 +19,7 @@ class ChargeMonitor : public QObject
     Q_PROPERTY(bool active READ active WRITE setActive NOTIFY activeChanged)
     Q_PROPERTY(QDateTime updated READ updated NOTIFY sampled)
 
-    // "pps", "pd", "basic" or "none"
+    // "pps", "pd", "basic", "wireless" or "none"
     Q_PROPERTY(QString mode READ mode NOTIFY sampled)
     Q_PROPERTY(bool plugged READ plugged NOTIFY sampled)
     // Into the battery; negative while it discharges.
@@ -34,8 +35,10 @@ class ChargeMonitor : public QObject
     Q_PROPERTY(QString status READ status NOTIFY sampled)
     Q_PROPERTY(QString usbType READ usbType NOTIFY sampled)
     Q_PROPERTY(QString pdRevision READ pdRevision NOTIFY sampled)
-    // [{name, online: 1/0/-1}] for every mtk* power supply
-    Q_PROPERTY(QVariantList chips READ chips NOTIFY sampled)
+    // The readings below the offers, grouped as the page shows them and the report lists them:
+    // [{title, items: [{label, param, value, dim}]}]. `param` is the sysfs attribute, relative to
+    // /sys/class/power_supply or /sys/class/typec; `label` is empty where there's no better name.
+    Q_PROPERTY(QVariantList sections READ sections NOTIFY sampled)
 
     // [{index, pps, minMv, maxMv, ma, watts, inUse}]
     Q_PROPERTY(QVariantList offers READ offers NOTIFY sampled)
@@ -50,7 +53,8 @@ class ChargeMonitor : public QObject
     Q_PROPERTY(QString version READ version CONSTANT)
 
 public:
-    explicit ChargeMonitor(QObject *parent = nullptr);
+    // `sysfsRoot` is "/sys" on a phone; tests point it at a copy of one.
+    explicit ChargeMonitor(const QString &sysfsRoot = QStringLiteral("/sys"), QObject *parent = nullptr);
 
     bool active() const { return m_active; }
     void setActive(bool active);
@@ -68,7 +72,7 @@ public:
     QString status() const { return m_status; }
     QString usbType() const { return m_usbType; }
     QString pdRevision() const { return m_pdRevision; }
-    QVariantList chips() const { return m_chips; }
+    QVariantList sections() const { return m_sections; }
     QVariantList offers() const;
     QString offersSource() const { return m_offersSource; }
     QString logError() const { return m_logError; }
@@ -78,6 +82,12 @@ public:
 
     Q_INVOKABLE void refresh();
     Q_INVOKABLE QString report() const;
+    // Every attribute of every power supply and Type-C port, unfiltered:
+    // [{title, path, items: [{name, value}]}]
+    Q_INVOKABLE QVariantList allReadings() const;
+    // allReadings() as text, with the device and the kernel log's PD lines, for a device report
+    // that tests/import-report.py turns into a test fixture.
+    Q_INVOKABLE QString deviceReport() const;
 
 signals:
     void activeChanged();
@@ -87,11 +97,18 @@ signals:
 
 private:
     void sample();
+    QString attrPath(const QString &supply, const QString &attr) const;
     void scanOffers();
     bool readTypecOffers();
     int inUseIndex() const;
     QString modeName() const;
+    QString deviceName() const;
+    void buildSections(const QStringList &supplies, const QString &battery, const QString &vbusSource,
+                       const QString &limitSource, const QString &usbTypeSource, const QString &port,
+                       const QString &partner);
 
+    const QString m_powerSupply;
+    const QString m_typec;
     QTimer m_poll;
     QTimer m_rescan;
     int m_rescansLeft = 0;
@@ -113,11 +130,12 @@ private:
     QString m_status;
     QString m_usbType;
     QString m_pdRevision;
-    QVariantList m_chips;
+    QVariantList m_sections;
 
     QVector<KernelLog::Pdo> m_pdos;
     int m_logSelected = -1;
     double m_logMark = 0;
+    qint64 m_lastScan = 0;   // ms since the epoch
     QString m_offersSource;
     QString m_logError;
 

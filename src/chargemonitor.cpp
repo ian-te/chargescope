@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QRegularExpression>
+#include <QSet>
 #include <QSysInfo>
 #include <QVariantMap>
 
@@ -13,17 +14,18 @@
 
 namespace {
 
-const QString PowerSupply = QStringLiteral("/sys/class/power_supply");
-const QString Typec = QStringLiteral("/sys/class/typec");
 const qint64 HistoryMs = 10 * 60 * 1000;
 const int PollMs = 2000;
 // After a plug-in the PD contract takes a moment, so look at the log again a few times.
 const int RescanMs[] = {2000, 5000, 15000};
 const int Rescans = sizeof(RescanMs) / sizeof(RescanMs[0]);
+// While plugged in with no offers found, look again this often: the driver may log them later.
+const qint64 RetryMs = 10000;
 
-// The supplies MediaTek's charger framework reports VBUS and the input limit on, best first.
-const QStringList InputSupplies = {QStringLiteral("mtk-master-charger"), QStringLiteral("mtk_charger_type"),
-                                   QStringLiteral("usb"), QStringLiteral("ac")};
+// The supplies VBUS and the input limit are read from, best first: MediaTek's charger framework,
+// then the charger IC's own supply (primary_chg on the MT6720), then the generic names.
+const QStringList InputSupplies = {QStringLiteral("mtk-master-charger"), QStringLiteral("primary_chg"),
+                                   QStringLiteral("mtk_charger_type"), QStringLiteral("usb"), QStringLiteral("ac")};
 
 QString readText(const QString &path)
 {
@@ -50,8 +52,9 @@ int leadingInt(const QString &text)
     return m.hasMatch() ? m.captured(1).toInt() : 0;
 }
 
-// The first supply in `preferred`, then any other online one, that reports `attr` above zero.
-qint64 readInput(const QString &attr, const QStringList &online)
+// The first of InputSupplies, then any other online supply, that reports `attr` above zero.
+// `source` gets "<supply>/<attr>", or just the attribute when none does.
+qint64 readInput(const QString &powerSupply, const QString &attr, const QStringList &online, QString *source)
 {
     QStringList order = InputSupplies;
     for (const QString &name : online) {
@@ -60,10 +63,90 @@ qint64 readInput(const QString &attr, const QStringList &online)
     }
     for (const QString &name : order) {
         qint64 v = 0;
-        if (readInt(PowerSupply + QLatin1Char('/') + name + QLatin1Char('/') + attr, &v) && v > 0)
+        if (readInt(powerSupply + QLatin1Char('/') + name + QLatin1Char('/') + attr, &v) && v > 0) {
+            *source = name + QLatin1Char('/') + attr;
             return v;
+        }
     }
+    *source = attr;
     return -1;
+}
+
+// The selected entry of a list like "Unknown SDP [DCP] CDP" or "source [sink]".
+QString bracketed(const QString &text)
+{
+    const int open = text.indexOf(QLatin1Char('['));
+    const int close = text.indexOf(QLatin1Char(']'), open);
+    if (open < 0 || close < open)
+        return text;
+    return text.mid(open + 1, close - open - 1);
+}
+
+// A charge pump (divider) supply: mtk-mst-div-chg, mtk-slv-hvdiv-chg, primary_dvchg, ...
+bool isPump(const QString &name)
+{
+    return name.contains(QLatin1String("div")) || name.contains(QLatin1String("dvchg"));
+}
+
+// The chip a supply belongs to, e.g. "MT6720": its model_name, else its device-tree
+// compatible string, else its own name. `dir` is the supply's folder, ending in '/'.
+QString chipModel(const QString &dir, const QString &name)
+{
+    const QString model = readText(dir + QStringLiteral("model_name"));
+    if (!model.isEmpty())
+        return model;
+    static const QRegularExpression re(QStringLiteral("\\bmt(\\d{4})"), QRegularExpression::CaseInsensitiveOption);
+    const QStringList uevent = readText(dir + QStringLiteral("uevent")).split(QLatin1Char('\n'));
+    for (const QString &line : uevent) {
+        if (line.startsWith(QLatin1String("OF_COMPATIBLE_0="))) {
+            const QRegularExpressionMatch m = re.match(line.mid(16).section(QLatin1Char(','), -1));
+            if (m.hasMatch())
+                return QStringLiteral("MT") + m.captured(1);
+        }
+    }
+    const QRegularExpressionMatch m = re.match(name);
+    return m.hasMatch() ? QStringLiteral("MT") + m.captured(1) : QString();
+}
+
+// What a supply is, from its name, with the chip when known: "Main charge pump", "Charger IC · MT6720".
+QString chipName(const QString &name, const QString &model)
+{
+    const QString id = name.toLower();
+    const bool main = id.contains(QLatin1String("master")) || id.contains(QLatin1String("mst"));
+    const bool second = id.contains(QLatin1String("slave")) || id.contains(QLatin1String("slv"));
+    QString kind;
+    if (id.contains(QLatin1String("gauge")))
+        kind = ChargeMonitor::tr("Fuel gauge");
+    else if (id.contains(QLatin1String("charger_type")))
+        kind = ChargeMonitor::tr("Charger type detection");
+    else if (id.contains(QLatin1String("hvdiv")))
+        kind = main ? ChargeMonitor::tr("Main high-voltage charge pump")
+             : second ? ChargeMonitor::tr("Second high-voltage charge pump")
+             : ChargeMonitor::tr("High-voltage charge pump");
+    else if (isPump(id))
+        kind = main ? ChargeMonitor::tr("Main charge pump")
+             : second ? ChargeMonitor::tr("Second charge pump")
+             : model.isEmpty() ? ChargeMonitor::tr("Charge pump") : ChargeMonitor::tr("Charge pump IC");
+    else if (id.contains(QLatin1String("chg")) || id.contains(QLatin1String("charger")))
+        kind = main ? ChargeMonitor::tr("Main charger")
+             : second ? ChargeMonitor::tr("Second charger")
+             : model.isEmpty() ? ChargeMonitor::tr("Charger") : ChargeMonitor::tr("Charger IC");
+    else
+        return model;
+    return model.isEmpty() ? kind : kind + QStringLiteral(" · ") + model;
+}
+
+// sysfs units: µA, µV, µAh, 0.1 °C, seconds.
+QString formatMa(qint64 ua) { return QStringLiteral("%1 mA").arg(ua / 1000); }
+QString formatV(qint64 uv) { return QString::number(uv / 1e6, 'f', 2) + QStringLiteral(" V"); }
+QString formatMah(qint64 uah) { return QStringLiteral("%1 mAh").arg(uah / 1000); }
+QString formatC(qint64 deci) { return QString::number(deci / 10.0, 'f', 1) + QStringLiteral(" °C"); }
+QString formatCount(qint64 n) { return QString::number(n); }
+QString formatDuration(qint64 s)
+{
+    const qint64 h = s / 3600;
+    const qint64 m = (s % 3600) / 60;
+    return h > 0 ? QStringLiteral("%1 h %2 min").arg(h).arg(m) : QStringLiteral("%1 min").arg(m);
 }
 
 QString volts(int mv)
@@ -78,8 +161,10 @@ QString amps(int ma)
 
 }
 
-ChargeMonitor::ChargeMonitor(QObject *parent)
+ChargeMonitor::ChargeMonitor(const QString &sysfsRoot, QObject *parent)
     : QObject(parent)
+    , m_powerSupply(sysfsRoot + QStringLiteral("/class/power_supply"))
+    , m_typec(sysfsRoot + QStringLiteral("/class/typec"))
     , m_temperature(std::numeric_limits<double>::quiet_NaN())
 {
     m_poll.setInterval(PollMs);
@@ -94,6 +179,11 @@ ChargeMonitor::ChargeMonitor(QObject *parent)
     });
 
     sample();
+}
+
+QString ChargeMonitor::attrPath(const QString &supply, const QString &attr) const
+{
+    return m_powerSupply + QLatin1Char('/') + supply + QLatin1Char('/') + attr;
 }
 
 void ChargeMonitor::setActive(bool active)
@@ -118,59 +208,59 @@ void ChargeMonitor::refresh()
 void ChargeMonitor::sample()
 {
     QString battery;
+    QString usbTypeSource;
+    QStringList supplies;
     QStringList online;
     bool plugged = false;
     bool divider = false;
+    bool wireless = false;
     m_usbType.clear();
-    m_chips.clear();
 
-    const QStringList names = QDir(PowerSupply).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    const QStringList names = QDir(m_powerSupply).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
     for (const QString &name : names) {
-        const QString dir = PowerSupply + QLatin1Char('/') + name + QLatin1Char('/');
-        const QString type = readText(dir + QStringLiteral("type"));
+        const QString type = readText(attrPath(name, QStringLiteral("type")));
         if (type == QLatin1String("Battery")) {
             if (battery.isEmpty() || name == QLatin1String("battery"))
-                battery = dir;
+                battery = name;
             continue;
         }
+        supplies.append(name);
         qint64 state = -1;
-        readInt(dir + QStringLiteral("online"), &state);
+        readInt(attrPath(name, QStringLiteral("online")), &state);
         if (state == 1) {
             plugged = true;
             online.append(name);
-            if (name.contains(QLatin1String("divider")) || name.contains(QLatin1String("dvchg")))
+            if (isPump(name))
                 divider = true;
-        }
-        if (name.startsWith(QLatin1String("mtk"))) {
-            QVariantMap chip;
-            chip.insert(QStringLiteral("name"), name);
-            chip.insert(QStringLiteral("online"), int(state));
-            m_chips.append(chip);
+            if (type == QLatin1String("Wireless"))
+                wireless = true;
         }
         // "Unknown SDP DCP CDP [PD] PD_PPS": the one in brackets is what's connected.
-        const QString usbType = readText(dir + QStringLiteral("usb_type"));
-        const int open = usbType.indexOf(QLatin1Char('['));
-        const int close = usbType.indexOf(QLatin1Char(']'), open);
-        if (open >= 0 && close > open && m_usbType.isEmpty() && state == 1) {
-            const QString selected = usbType.mid(open + 1, close - open - 1);
-            if (selected != QLatin1String("Unknown"))
+        const QString usbType = readText(attrPath(name, QStringLiteral("usb_type")));
+        if (usbType.contains(QLatin1Char('[')) && m_usbType.isEmpty() && state == 1) {
+            const QString selected = bracketed(usbType);
+            if (selected != QLatin1String("Unknown")) {
                 m_usbType = selected;
+                usbTypeSource = name + QStringLiteral("/usb_type");
+            }
         }
     }
 
-    const qint64 vbus = plugged ? readInput(QStringLiteral("voltage_now"), online) : -1;
+    QString vbusSource = QStringLiteral("voltage_now");
+    QString limitSource = QStringLiteral("input_current_limit");
+    const qint64 vbus = plugged ? readInput(m_powerSupply, vbusSource, online, &vbusSource) : -1;
     // Microvolts as the ABI says, but a few drivers give millivolts.
     m_vbusMv = vbus < 0 ? -1 : int(vbus >= 100000 ? vbus / 1000 : vbus);
-    const qint64 limit = plugged ? readInput(QStringLiteral("input_current_limit"), online) : -1;
+    const qint64 limit = readInput(m_powerSupply, limitSource, online, &limitSource);
     m_inputLimitMa = limit < 0 ? -1 : int(limit / 1000);
 
-    m_status = battery.isEmpty() ? QString() : readText(battery + QStringLiteral("status"));
+    m_status = battery.isEmpty() ? QString() : readText(attrPath(battery, QStringLiteral("status")));
     qint64 v = 0;
-    m_batteryMv = readInt(battery + QStringLiteral("voltage_now"), &v) ? int(v >= 100000 ? v / 1000 : v) : -1;
-    m_capacity = readInt(battery + QStringLiteral("capacity"), &v) ? int(v) : -1;
-    m_temperature = readInt(battery + QStringLiteral("temp"), &v) ? v / 10.0
-                                                                  : std::numeric_limits<double>::quiet_NaN();
-    if (readInt(battery + QStringLiteral("current_now"), &v)) {
+    m_batteryMv = readInt(attrPath(battery, QStringLiteral("voltage_now")), &v) ? int(v >= 100000 ? v / 1000 : v) : -1;
+    m_capacity = readInt(attrPath(battery, QStringLiteral("capacity")), &v) ? int(v) : -1;
+    m_temperature = readInt(attrPath(battery, QStringLiteral("temp")), &v)
+            ? v / 10.0 : std::numeric_limits<double>::quiet_NaN();
+    if (readInt(attrPath(battery, QStringLiteral("current_now")), &v)) {
         // Drivers disagree on the sign, so learn it from the status while the current is clear.
         if (std::abs(v) > 100000) {
             if (m_status == QLatin1String("Charging"))
@@ -184,20 +274,24 @@ void ChargeMonitor::sample()
     }
     m_watts = m_batteryMv > 0 ? m_batteryMa * double(m_batteryMv) / 1e6 : 0;
 
+    // port0 is the phone's own port; port0-partner exists while something is plugged in.
+    QString port;
+    QString partner;
     QString partnerRevision;
-    QString portRevision;
-    const QStringList ports = QDir(Typec).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
-    for (const QString &port : ports) {
-        QString revision = readText(Typec + QLatin1Char('/') + port + QStringLiteral("/usb_power_delivery_revision"));
-        if (revision.isEmpty() || revision == QLatin1String("0.0"))
-            continue;
-        if (port.endsWith(QLatin1String("-partner")))
-            partnerRevision = revision;
-        else if (!port.contains(QLatin1Char('-')))
-            portRevision = revision;
+    const QStringList ports = QDir(m_typec).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QString &entry : ports) {
+        if (port.isEmpty() && !entry.contains(QLatin1Char('-')))
+            port = entry;
     }
-    m_pdRevision = !partnerRevision.isEmpty() ? partnerRevision : portRevision;
+    if (!port.isEmpty() && ports.contains(port + QStringLiteral("-partner"))) {
+        partner = port + QStringLiteral("-partner");
+        partnerRevision = readText(m_typec + QLatin1Char('/') + partner + QStringLiteral("/usb_power_delivery_revision"));
+        if (partnerRevision == QLatin1String("0.0"))
+            partnerRevision.clear();
+    }
+    m_pdRevision = partnerRevision;
 
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     if (m_first || plugged != m_plugged) {
         const bool plugIn = !m_first && plugged;
         m_first = false;
@@ -207,18 +301,24 @@ void ChargeMonitor::sample()
             m_rescansLeft = Rescans;
             m_rescan.start(RescanMs[0]);
         }
+    } else if (m_plugged && m_pdos.isEmpty() && !m_rescan.isActive() && nowMs - m_lastScan >= RetryMs) {
+        scanOffers();
     }
 
     m_direct = divider || m_usbType == QLatin1String("PD_PPS");
     const int inUse = inUseIndex();
     if (!m_plugged)
         m_mode = QStringLiteral("none");
+    else if (wireless)
+        m_mode = QStringLiteral("wireless");
     else if (m_direct || (inUse >= 0 && m_pdos.at(inUse).pps))
         m_mode = QStringLiteral("pps");
     else if (m_usbType.startsWith(QLatin1String("PD")) || !partnerRevision.isEmpty() || !m_pdos.isEmpty())
         m_mode = QStringLiteral("pd");
     else
         m_mode = QStringLiteral("basic");
+
+    buildSections(supplies, battery, vbusSource, limitSource, usbTypeSource, port, partner);
 
     m_updated = QDateTime::currentDateTime();
     const qint64 now = m_updated.toMSecsSinceEpoch();
@@ -230,8 +330,227 @@ void ChargeMonitor::sample()
     emit historyChanged();
 }
 
+void ChargeMonitor::buildSections(const QStringList &supplies, const QString &battery, const QString &vbusSource,
+                                  const QString &limitSource, const QString &usbTypeSource, const QString &port,
+                                  const QString &partner)
+{
+    m_sections.clear();
+    QVariantList items;
+    // `detail` goes in small print under the value.
+    const auto addDetailed = [&items](const QString &label, const QString &param, const QString &value,
+                                      const QString &detail, bool dim) {
+        QVariantMap item;
+        item.insert(QStringLiteral("label"), label);
+        item.insert(QStringLiteral("param"), param);
+        item.insert(QStringLiteral("value"), value);
+        item.insert(QStringLiteral("detail"), detail);
+        item.insert(QStringLiteral("dim"), dim);
+        items.append(item);
+    };
+    const auto add = [&addDetailed](const QString &label, const QString &param, const QString &value, bool dim) {
+        addDetailed(label, param, value, QString(), dim);
+    };
+    const auto section = [this, &items](const QString &title) {
+        if (!items.isEmpty()) {
+            QVariantMap map;
+            map.insert(QStringLiteral("title"), title);
+            map.insert(QStringLiteral("items"), items);
+            m_sections.append(map);
+        }
+        items.clear();
+    };
+    // A number from a supply, shown only where the supply has it.
+    const auto number = [this, &add](const QString &label, const QString &supply, const char *attr,
+                               QString (*format)(qint64)) {
+        qint64 value = 0;
+        if (!supply.isEmpty() && readInt(attrPath(supply, QLatin1String(attr)), &value))
+            add(label, supply + QLatin1Char('/') + QLatin1String(attr), format(value), false);
+    };
+    const auto text = [this, &add](const QString &label, const QString &supply, const char *attr) {
+        const QString value = supply.isEmpty() ? QString() : readText(attrPath(supply, QLatin1String(attr)));
+        if (!value.isEmpty())
+            add(label, supply + QLatin1Char('/') + QLatin1String(attr), value, false);
+    };
+    // A setting with its ceiling under it: "3000 mA", "max 3150 mA".
+    const auto withMax = [this, &addDetailed](const QString &label, const QString &supply, const char *attr, const char *maxAttr,
+                                QString (*format)(qint64)) {
+        qint64 value = 0;
+        qint64 max = 0;
+        if (supply.isEmpty() || !readInt(attrPath(supply, QLatin1String(attr)), &value))
+            return;
+        QString detail;
+        if (readInt(attrPath(supply, QLatin1String(maxAttr)), &max) && max > 0)
+            detail = tr("max %1").arg(format(max));
+        addDetailed(label, supply + QLatin1Char('/') + QLatin1String(attr), format(value), detail, false);
+    };
+
+    // The charger IC is the supply with charge settings; the charge pump the divider with a current reading.
+    QString charger;
+    QString pump;
+    for (const QString &name : supplies) {
+        if (charger.isEmpty() && QFile::exists(attrPath(name, QStringLiteral("constant_charge_current"))))
+            charger = name;
+        if (pump.isEmpty() && isPump(name) && QFile::exists(attrPath(name, QStringLiteral("current_now"))))
+            pump = name;
+    }
+
+    add(tr("VBUS"), vbusSource, m_vbusMv >= 0 ? volts(m_vbusMv) : QStringLiteral("—"), false);
+    add(tr("Input current limit"), limitSource,
+        m_inputLimitMa >= 0 ? QStringLiteral("%1 mA").arg(m_inputLimitMa) : QStringLiteral("—"), false);
+    number(tr("Input voltage limit"), charger, "input_voltage_limit", formatV);
+    withMax(tr("Charge current"), charger, "constant_charge_current", "constant_charge_current_max", formatMa);
+    withMax(tr("Charge voltage"), charger, "constant_charge_voltage", "constant_charge_voltage_max", formatV);
+    number(tr("Pre-charge current"), charger, "precharge_current", formatMa);
+    number(tr("Termination current"), charger, "charge_term_current", formatMa);
+    text(tr("Charger status"), charger, "status");
+    for (const QString &name : {QStringLiteral("mtk-master-charger"), charger}) {
+        qint64 temp = 0;
+        if (!name.isEmpty() && readInt(attrPath(name, QStringLiteral("temp")), &temp) && temp > 0) {
+            add(tr("Charger temperature"), name + QStringLiteral("/temp"), formatC(temp), false);
+            break;
+        }
+    }
+    section(tr("Charging"));
+
+    text(tr("Status"), pump, "status");
+    number(tr("Voltage"), pump, "voltage_now", formatV);
+    number(tr("Current"), pump, "current_now", formatMa);
+    number(tr("Temperature"), pump, "temp", formatC);
+    number(tr("Voltage limit"), pump, "voltage_max", formatV);
+    number(tr("Current limit"), pump, "current_max", formatMa);
+    section(tr("Charge pump"));
+
+    if (!battery.isEmpty()) {
+        const int sign = m_currentSign ? m_currentSign : 1;
+        add(tr("Current"), battery + QStringLiteral("/current_now"), QStringLiteral("%1 mA").arg(m_batteryMa), false);
+        qint64 avg = 0;
+        if (readInt(attrPath(battery, QStringLiteral("current_avg")), &avg))
+            add(tr("Average current"), battery + QStringLiteral("/current_avg"), formatMa(avg * sign), false);
+        number(tr("Voltage"), battery, "voltage_now", formatV);
+        number(tr("Temperature"), battery, "temp", formatC);
+        number(tr("Charge level"), battery, "capacity", [](qint64 n) { return QStringLiteral("%1 %").arg(n); });
+        text(tr("Status"), battery, "status");
+        text(tr("Health"), battery, "health");
+        qint64 full = 0;
+        qint64 design = 0;
+        if (readInt(attrPath(battery, QStringLiteral("charge_full")), &full)) {
+            QString detail;
+            if (readInt(attrPath(battery, QStringLiteral("charge_full_design")), &design) && design > 0)
+                detail = tr("%1 % of %2 new").arg(qRound(100.0 * full / design)).arg(formatMah(design));
+            addDetailed(tr("Capacity"), battery + QStringLiteral("/charge_full"), formatMah(full), detail, false);
+        }
+        number(tr("Charge remaining"), battery, "charge_counter", formatMah);
+        number(tr("Cycle count"), battery, "cycle_count", formatCount);
+        // The driver keeps an estimate while discharging too, which means nothing then.
+        qint64 toFull = 0;
+        if (m_status == QLatin1String("Charging") && readInt(attrPath(battery, QStringLiteral("time_to_full_now")), &toFull)
+                && toFull > 0)
+            add(tr("Time to full"), battery + QStringLiteral("/time_to_full_now"), formatDuration(toFull), false);
+        text(tr("Technology"), battery, "technology");
+    }
+    section(tr("Battery"));
+
+    if (!port.isEmpty()) {
+        const QString dir = m_typec + QLatin1Char('/') + port + QLatin1Char('/');
+        add(tr("Charger PD revision"),
+            (partner.isEmpty() ? port + QStringLiteral("-partner") : partner) + QStringLiteral("/usb_power_delivery_revision"),
+            !m_pdRevision.isEmpty() ? m_pdRevision : partner.isEmpty() ? tr("Nothing plugged in") : tr("No PD"), false);
+        const QString mode = readText(dir + QStringLiteral("power_operation_mode"));
+        if (!mode.isEmpty()) {
+            const QString shown = mode == QLatin1String("default") ? tr("Default USB")
+                                : mode == QLatin1String("usb_power_delivery") ? tr("USB PD")
+                                : QString(mode).replace(QLatin1String("A"), QLatin1String(" A"));
+            add(tr("Type-C power mode"), port + QStringLiteral("/power_operation_mode"), shown, false);
+        }
+        const QString power = bracketed(readText(dir + QStringLiteral("power_role")));
+        if (!power.isEmpty())
+            add(tr("Power role"), port + QStringLiteral("/power_role"), power, false);
+        const QString data = bracketed(readText(dir + QStringLiteral("data_role")));
+        if (!data.isEmpty())
+            add(tr("Data role"), port + QStringLiteral("/data_role"), data, false);
+    }
+    if (!m_usbType.isEmpty())
+        add(tr("USB type"), usbTypeSource, m_usbType, false);
+    if (!port.isEmpty()) {
+        const QString dir = m_typec + QLatin1Char('/') + port + QLatin1Char('/');
+        const QString pd = readText(dir + QStringLiteral("usb_power_delivery_revision"));
+        if (!pd.isEmpty())
+            add(tr("Phone PD revision"), port + QStringLiteral("/usb_power_delivery_revision"), pd, false);
+        const QString typec = readText(dir + QStringLiteral("usb_typec_revision"));
+        if (!typec.isEmpty())
+            add(tr("Type-C revision"), port + QStringLiteral("/usb_typec_revision"), typec, false);
+    }
+    section(tr("USB-C"));
+
+    for (const QString &name : supplies) {
+        qint64 state = -1;
+        readInt(attrPath(name, QStringLiteral("online")), &state);
+        add(chipName(name, chipModel(attrPath(name, QString()), name)), name + QStringLiteral("/online"),
+            state == 1 ? tr("Online") : state == 0 ? tr("Offline") : QStringLiteral("—"), state != 1);
+    }
+    section(tr("Charger chips"));
+}
+
+QVariantList ChargeMonitor::allReadings() const
+{
+    QVariantList groups;
+    const auto group = [&groups](const QString &title, const QString &path, const QVariantList &items) {
+        if (items.isEmpty())
+            return;
+        QVariantMap map;
+        map.insert(QStringLiteral("title"), title);
+        map.insert(QStringLiteral("path"), path);
+        map.insert(QStringLiteral("items"), items);
+        groups.append(map);
+    };
+    const auto item = [](const QString &name, const QString &value) {
+        QVariantMap map;
+        map.insert(QStringLiteral("name"), name);
+        map.insert(QStringLiteral("value"), value);
+        return QVariant(map);
+    };
+
+    // A supply's uevent holds every property it has, as POWER_SUPPLY_<NAME>=<value>.
+    const QStringList supplies = QDir(m_powerSupply).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QString &supply : supplies) {
+        QVariantList items;
+        QSet<QString> seen;
+        const QStringList lines = readText(attrPath(supply, QStringLiteral("uevent"))).split(QLatin1Char('\n'));
+        for (const QString &line : lines) {
+            const int eq = line.indexOf(QLatin1Char('='));
+            if (eq <= 0)
+                continue;
+            QString key = line.left(eq);
+            if (key.startsWith(QLatin1String("POWER_SUPPLY_")))
+                key = key.mid(13).toLower();
+            if (key == QLatin1String("name") || key == QLatin1String("DEVTYPE") || seen.contains(key))
+                continue;
+            seen.insert(key);
+            items.append(item(key, line.mid(eq + 1)));
+        }
+        group(supply, m_powerSupply + QLatin1Char('/') + supply, items);
+    }
+
+    const QStringList ports = QDir(m_typec).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QString &port : ports) {
+        const QString dir = m_typec + QLatin1Char('/') + port;
+        QVariantList items;
+        const QStringList files = QDir(dir).entryList(QDir::Files, QDir::Name);
+        for (const QString &file : files) {
+            if (file == QLatin1String("uevent"))
+                continue;
+            const QString value = readText(dir + QLatin1Char('/') + file);
+            if (!value.isEmpty())
+                items.append(item(file, value));
+        }
+        group(port, dir, items);
+    }
+    return groups;
+}
+
 void ChargeMonitor::scanOffers()
 {
+    m_lastScan = QDateTime::currentMSecsSinceEpoch();
     if (!m_plugged) {
         // Remember where the log ends, so the next charger isn't shown this one's offers.
         const KernelLog::Scan scan = KernelLog::scan(std::numeric_limits<double>::max());
@@ -251,6 +570,9 @@ void ChargeMonitor::scanOffers()
         m_pdos = scan.pdos;
         m_logSelected = scan.selected;
         m_offersSource = QStringLiteral("dmesg");
+    } else if (m_offersSource == QLatin1String("dmesg") && !m_pdos.isEmpty()) {
+        // Found earlier for this charger: other drivers' chatter may have pushed it out of the
+        // ring buffer since, so keep it until the charger is unplugged.
     } else if (readTypecOffers()) {
         m_logSelected = -1;
         m_offersSource = QStringLiteral("typec");
@@ -267,9 +589,9 @@ void ChargeMonitor::scanOffers()
 bool ChargeMonitor::readTypecOffers()
 {
     QVector<KernelLog::Pdo> pdos;
-    const QStringList ports = QDir(Typec).entryList({QStringLiteral("*-partner")}, QDir::Dirs | QDir::NoDotAndDotDot);
+    const QStringList ports = QDir(m_typec).entryList({QStringLiteral("*-partner")}, QDir::Dirs | QDir::NoDotAndDotDot);
     for (const QString &port : ports) {
-        const QString caps = Typec + QLatin1Char('/') + port + QStringLiteral("/usb_power_delivery/source-capabilities");
+        const QString caps = m_typec + QLatin1Char('/') + port + QStringLiteral("/usb_power_delivery/source-capabilities");
         const QStringList entries = QDir(caps).entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
         for (const QString &entry : entries) {
             const QString dir = caps + QLatin1Char('/') + entry + QLatin1Char('/');
@@ -372,6 +694,55 @@ double ChargeMonitor::historyPeak() const
     return peak;
 }
 
+QString ChargeMonitor::deviceReport() const
+{
+    QStringList out;
+    out << QStringLiteral("ChargeScope %1 device report").arg(version());
+    out << QStringLiteral("Device: %1").arg(deviceName());
+    out << QStringLiteral("System: %1").arg(QSysInfo::prettyProductName());
+    out << QStringLiteral("Kernel: %1").arg(QSysInfo::kernelVersion());
+    out << QStringLiteral("Plugged in: %1, mode %2").arg(m_plugged ? QStringLiteral("yes") : QStringLiteral("no"), m_mode);
+
+    const QVariantList groups = allReadings();
+    for (const QVariant &entry : groups) {
+        const QVariantMap group = entry.toMap();
+        // The real path, whatever root this monitor reads, so reports from tests look the same.
+        QString path = group.value(QStringLiteral("path")).toString();
+        if (path.startsWith(m_powerSupply))
+            path = QStringLiteral("/sys/class/power_supply") + path.mid(m_powerSupply.size());
+        else if (path.startsWith(m_typec))
+            path = QStringLiteral("/sys/class/typec") + path.mid(m_typec.size());
+        out << QString() << path;
+        const QVariantList items = group.value(QStringLiteral("items")).toList();
+        for (const QVariant &i : items) {
+            const QVariantMap item = i.toMap();
+            out << QStringLiteral("  %1 = %2").arg(item.value(QStringLiteral("name")).toString(),
+                                                   item.value(QStringLiteral("value")).toString());
+        }
+    }
+
+    QString error;
+    const QStringList lines = KernelLog::pdLines(200, &error);
+    out << QString() << QStringLiteral("Kernel log, PD and charger lines:");
+    if (!error.isEmpty())
+        out << QStringLiteral("  (%1)").arg(error);
+    else if (lines.isEmpty())
+        out << QStringLiteral("  (none)");
+    for (const QString &line : lines)
+        out << QStringLiteral("  ") + line;
+    return out.join(QLatin1Char('\n')) + QLatin1Char('\n');
+}
+
+QString ChargeMonitor::deviceName() const
+{
+    const QStringList hw = readText(QStringLiteral("/etc/hw-release")).split(QLatin1Char('\n'));
+    for (const QString &line : hw) {
+        if (line.startsWith(QLatin1String("NAME=")))
+            return line.mid(5).remove(QLatin1Char('"'));
+    }
+    return QStringLiteral("unknown");
+}
+
 QString ChargeMonitor::version() const
 {
     return QStringLiteral(APP_VERSION);
@@ -385,13 +756,14 @@ QString ChargeMonitor::modeName() const
         return QStringLiteral("USB PD");
     if (m_mode == QLatin1String("basic"))
         return QStringLiteral("Basic USB");
+    if (m_mode == QLatin1String("wireless"))
+        return QStringLiteral("Wireless");
     return QStringLiteral("Not charging");
 }
 
 QString ChargeMonitor::report() const
 {
     QStringList out;
-    const auto known = [](int value, const QString &text) { return value >= 0 ? text : QStringLiteral("—"); };
 
     out << QStringLiteral("ChargeScope %1 report, %2").arg(version(), m_updated.toString(Qt::ISODate));
     QString mode = modeName();
@@ -424,35 +796,24 @@ QString ChargeMonitor::report() const
     if (!m_logError.isEmpty())
         out << QStringLiteral("  kernel log: %1").arg(m_logError);
 
-    out << QString() << QStringLiteral("Phone:");
-    out << QStringLiteral("  VBUS: %1").arg(known(m_vbusMv, volts(m_vbusMv)));
-    out << QStringLiteral("  Input current limit: %1").arg(known(m_inputLimitMa, QStringLiteral("%1 mA").arg(m_inputLimitMa)));
-    out << QStringLiteral("  Battery current: %1 mA").arg(m_batteryMa);
-    out << QStringLiteral("  Battery voltage: %1").arg(known(m_batteryMv, volts(m_batteryMv)));
-    out << QStringLiteral("  Battery temperature: %1")
-                   .arg(std::isnan(m_temperature) ? QStringLiteral("—")
-                                                  : QString::number(m_temperature, 'f', 1) + QStringLiteral(" °C"));
-    out << QStringLiteral("  Charge level: %1, %2")
-                   .arg(known(m_capacity, QStringLiteral("%1 %").arg(m_capacity)),
-                        m_status.isEmpty() ? QStringLiteral("—") : m_status);
-    QStringList chips;
-    for (const QVariant &item : m_chips) {
-        const QVariantMap c = item.toMap();
-        const int state = c.value(QStringLiteral("online")).toInt();
-        chips << QStringLiteral("%1 %2").arg(c.value(QStringLiteral("name")).toString(),
-                                             state == 1 ? QStringLiteral("online")
-                                                        : state == 0 ? QStringLiteral("offline") : QStringLiteral("?"));
+    out << QString() << QStringLiteral("Readings (sysfs, under /sys/class/power_supply and /sys/class/typec):");
+    for (const QVariant &entry : m_sections) {
+        const QVariantMap section = entry.toMap();
+        out << QString() << section.value(QStringLiteral("title")).toString() + QLatin1Char(':');
+        const QVariantList items = section.value(QStringLiteral("items")).toList();
+        for (const QVariant &i : items) {
+            const QVariantMap item = i.toMap();
+            const QString label = item.value(QStringLiteral("label")).toString();
+            const QString param = item.value(QStringLiteral("param")).toString();
+            QString value = item.value(QStringLiteral("value")).toString();
+            const QString detail = item.value(QStringLiteral("detail")).toString();
+            if (!detail.isEmpty())
+                value += QStringLiteral(" (%1)").arg(detail);
+            out << QStringLiteral("  %1: %2  [%3]").arg(label.isEmpty() ? param : label, value, param);
+        }
     }
-    out << QStringLiteral("  Charger chips: %1").arg(chips.isEmpty() ? QStringLiteral("none found") : chips.join(QStringLiteral(", ")));
 
-    QString device;
-    const QStringList hw = readText(QStringLiteral("/etc/hw-release")).split(QLatin1Char('\n'));
-    for (const QString &line : hw) {
-        if (line.startsWith(QLatin1String("NAME=")))
-            device = line.mid(5).remove(QLatin1Char('"'));
-    }
     out << QString() << QStringLiteral("Device: %1, %2, kernel %3")
-                                .arg(device.isEmpty() ? QStringLiteral("unknown") : device,
-                                     QSysInfo::prettyProductName(), QSysInfo::kernelVersion());
+                                .arg(deviceName(), QSysInfo::prettyProductName(), QSysInfo::kernelVersion());
     return out.join(QLatin1Char('\n')) + QLatin1Char('\n');
 }

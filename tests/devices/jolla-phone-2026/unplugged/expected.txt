@@ -1,0 +1,54 @@
+mode: none
+plugged: no
+watts: -0.30
+
+[Charging]
+VBUS: —  <- voltage_now
+Input current limit: 100 mA  <- primary_chg/input_current_limit
+Input voltage limit: 4.40 V  <- primary_chg/input_voltage_limit
+Charge current: 3000 mA (max 3150 mA)  <- primary_chg/constant_charge_current
+Charge voltage: 4.52 V (max 4.85 V)  <- primary_chg/constant_charge_voltage
+Pre-charge current: 1000 mA  <- primary_chg/precharge_current
+Termination current: 300 mA  <- primary_chg/charge_term_current
+Charger status: Discharging  <- primary_chg/status
+Charger temperature: 42.0 °C  <- mtk-master-charger/temp
+
+[Charge pump]
+Status: Not charging  <- primary_dvchg/status
+Voltage: 0.00 V  <- primary_dvchg/voltage_now
+Current: 0 mA  <- primary_dvchg/current_now
+Temperature: 25.0 °C  <- primary_dvchg/temp
+Voltage limit: 8.90 V  <- primary_dvchg/voltage_max
+Current limit: 1000 mA  <- primary_dvchg/current_max
+
+[Battery]
+Current: -75 mA  <- battery/current_now
+Average current: -70 mA  <- battery/current_avg
+Voltage: 4.04 V  <- battery/voltage_now
+Temperature: 34.6 °C  <- battery/temp
+Charge level: 63 %  <- battery/capacity
+Status: Discharging  <- battery/status
+Health: Good  <- battery/health
+Capacity: 3760 mAh (100 % of 3760 mAh new)  <- battery/charge_full
+Charge remaining: 2368 mAh  <- battery/charge_counter
+Cycle count: 2  <- battery/cycle_count
+Technology: Li-ion  <- battery/technology
+
+[USB-C]
+Charger PD revision: Nothing plugged in  <- port0-partner/usb_power_delivery_revision
+Type-C power mode: Default USB  <- port0/power_operation_mode
+Power role: sink  <- port0/power_role
+Data role: device  <- port0/data_role
+Phone PD revision: 3.1  <- port0/usb_power_delivery_revision
+Type-C revision: 1.2  <- port0/usb_typec_revision
+
+[Charger chips]
+Fuel gauge · MT6720: Offline [dim]  <- mt6720-gauge/online
+Main charger: Offline [dim]  <- mtk-master-charger/online
+Main charge pump: Offline [dim]  <- mtk-mst-div-chg/online
+Main high-voltage charge pump: Offline [dim]  <- mtk-mst-hvdiv-chg/online
+Second charger: Offline [dim]  <- mtk-slave-charger/online
+Second charge pump: Offline [dim]  <- mtk-slv-div-chg/online
+Second high-voltage charge pump: Offline [dim]  <- mtk-slv-hvdiv-chg/online
+Charger IC · MT6720: Offline [dim]  <- primary_chg/online
+Charge pump IC · MT6720: Offline [dim]  <- primary_dvchg/online

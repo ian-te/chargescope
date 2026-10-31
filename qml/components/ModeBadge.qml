@@ -14,6 +14,7 @@ Rectangle {
         case "pps": return light ? "#16803f" : "#62e295"
         case "pd": return Theme.highlightColor
         case "basic": return light ? "#9a5800" : "#f4b24c"
+        case "wireless": return light ? "#6b3fb8" : "#c3a2ff"
         default: return Theme.secondaryColor
         }
     }

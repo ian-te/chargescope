@@ -19,7 +19,24 @@ env:
   SDK_IMAGE: coderus/sailfishos-platform-sdk:latest
 
 jobs:
+  # The backend against every phone in tests/devices/, and a syntax check of the QML, with the
+  # runner's own Qt 5: quick, and no SDK needed.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt 5
+        run: sudo apt-get update -q && sudo apt-get install -y -q qtbase5-dev qtdeclarative5-dev-tools
+      - name: Run the tests
+        run: |
+          mkdir build-tests && cd build-tests
+          /usr/lib/qt5/bin/qmake ../tests/tests.pro && make -j"$(nproc)"
+          ./tst_chargescope
+      - name: Check the QML
+        run: find qml -name '*.qml' -o -name '*.js' | xargs /usr/lib/qt5/bin/qmllint
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
